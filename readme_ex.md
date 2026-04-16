@@ -1,245 +1,70 @@
-# Support-Constrained Reasoning: Null Masking Experiment
+# Support-Constrained Generation for Syllogistic and Arithmetic Reasoning
 
-## Overview
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Qwen2--1.5B-orange)](https://huggingface.co/Qwen/Qwen2-1.5B)
 
-This repository contains a minimal but **strict experimental validation** of a key limitation of large language models:
+This repository contains a minimal yet rigorous demonstration of **support‑constrained generation** inspired by the paper  
+*"Support-Constrained Variational Meta Chain-of-Thought: A Nullity-Semantics Framework"* (Yakunin, 2026).
 
-> **LLMs assign non-zero probability mass to logically invalid outputs, even in simple reasoning tasks.**
-
-We demonstrate that this behavior is **systematic**, and show that it can be **eliminated entirely** using support-constrained masking.
-
----
-
-## Core Idea
-
-We evaluate a pretrained language model as a **probability distribution over candidate completions**.
-
-For each prompt:
-
-1. Generate a small set of candidate continuations:
-
-   * correct answer
-   * incorrect logical alternatives
-   * random unrelated text
-2. Compute **exact log-probabilities** using the model
-3. Measure how much probability mass is assigned to **invalid candidates**
-
-We then simulate a **logical verifier**:
-
-$$
-\chi(c) =
-\begin{cases}
-1, & \text{valid continuation}\
-0, & \text{invalid continuation}
-\end{cases}
-$$
-
-and compare:
-
-* baseline distribution (P_{\text{base}})
-* masked distribution (P_{\text{masked}})
+We show that a standard causal language model (**Qwen2‑1.5B**) systematically assigns non‑zero probability to logically impossible completions, and that a simple logical mask eliminates this *null leakage* while preserving relative preferences among valid continuations.  
+The experiment also validates the **deadlock mechanism** – when no admissible continuation exists, the system correctly signals a logical contradiction.
 
 ---
 
-## Experiment Setup
+## What Does This Experiment Test?
 
-* Model: `Qwen/Qwen2-1.5B`
-* Device: CPU
-* Samples: 1000
-* Tasks:
+We evaluate the base model on three types of synthetic tasks:
 
-  * Syllogisms (logical reasoning)
-  * Arithmetic
-  * Contradictions (unsatisfiable)
+| Task type        | Example prompt                                     | Correct completion          | Incorrect completions               |
+|------------------|----------------------------------------------------|-----------------------------|-------------------------------------|
+| **syllogism**    | `All A are B.\nAll B are C.\nTherefore:`           | ` All A are C.`             | ` Some A are not C.`<br>` No A are C.` |
+| **arithmetic**   | `12 + 7 =`                                         | ` 19`                       | ` 20`, ` 18`                        |
+| **contradiction**| `X is true.\nNot X is true.\nTherefore:`           | *(none)*                    | ` X is true.`, ` Not X is true.`    |
 
-Log-probabilities are computed **exactly at token level**, not approximated.
+For each example we compute the exact log‑probability of every candidate continuation (teacher‑forcing style) and then apply a hard logical mask $\chi(c) \in \{0,1\}$ provided by an **ideal oracle verifier** (which knows the ground‑truth answer).
 
-Implementation: see 
+Two key metrics are reported:
 
----
-
-## Metrics
-
-We measure:
-
-### 1. Null Mass
-
-$$
-\text{NullMass} = \sum_{c:\chi(c)=0} P_{\text{base}}(c)
-$$
-
-Probability assigned to invalid outputs.
+- **`null_mass`** – the total probability mass that the unmasked model assigns to **logically invalid** completions.
+- **`deadlock`** – whether the set of admissible continuations is empty after masking (i.e. no valid token exists).
 
 ---
 
-### 2. Null Leakage
+## Key Results (N = 1000)
 
-$$
-P(\text{null} > 0)
-$$
+| Task type       | Count | Mean `null_mass` | `null_positive` rate | `deadlock` rate |
+|-----------------|-------|------------------|----------------------|-----------------|
+| **contradiction** | 298   | ≈ 1.0            | 1.0                  | 1.0             |
+| **arithmetic**    | 300   | 0.08             | 1.0                  | 0.0             |
+| **syllogism**     | 402   | 0.004            | 1.0                  | 0.0             |
 
-Fraction of cases where invalid tokens receive non-zero probability.
+**Observations:**
 
----
+1. **Null leakage is universal.**  
+   In every non‑contradiction example the base model assigns strictly positive probability to at least one invalid completion (`null_positive = 1.0`).
 
-### 3. Deadlock Rate
+2. **The magnitude of leakage varies.**  
+   The model is far more confident on syllogistic patterns (mean null mass ~0.4%) than on exact arithmetic (mean null mass ~8%), reflecting the inherent difficulty of precise numerical reasoning for a pure language model.
 
-$$
-P\left(\sum P_{\text{masked}} = 0\right)
-$$
+3. **Deadlock occurs exactly when it should.**  
+   All contradictory prompts result in an empty admissible set after masking (`deadlock = 1`). This is the precise condition for emitting a special `[LOGICAL_ERROR]` token and triggering backtracking in a full Meta‑CoT system.
 
-Cases where **no valid continuation exists**.
-
----
-
-## Key Results
-
-### Global
-
-* **Mean null mass ≈ 0.32**
-* **P(null > 0) = 1.0**
-* **Deadlock rate ≈ 0.30**
+4. **Masking guarantees zero null probability.**  
+   By construction, after renormalizing over the masked support, every invalid token receives **exactly zero** probability. This empirically verifies **Proposition 1 (Strict exclusion of Null)** from the theoretical framework.
 
 ---
 
-### Interpretation
+## How to Reproduce
 
-#### 1. Systematic Logical Leakage
+### Requirements
 
-$$
-P_{\text{base}}(\text{invalid}) > 0 \quad \text{in 100% of cases}
-$$
+- Python 3.8+
+- PyTorch ≥ 2.0
+- Transformers ≥ 4.30
+- NumPy, tqdm
 
-The model **always assigns probability to incorrect answers**, even when the correct answer is trivial.
+Install dependencies:
 
----
-
-#### 2. Significant Error Mass
-
-~30% of total probability mass is allocated to invalid continuations.
-
-This is not noise — it is a **structural property of the model distribution**.
-
----
-
-#### 3. Failure on Contradictions
-
-For inconsistent inputs:
-
-* valid solution does not exist
-* all candidates are invalid
-* masked distribution collapses
-
-$$
-\Rightarrow \text{deadlock}
-$$
-
-This demonstrates:
-
-> The model **does not natively represent UNSAT states** and will normally generate an answer anyway.
-
----
-
-## What This Shows
-
-### Proven
-
-* LLMs do **not enforce logical constraints in probability space**
-* Invalid outputs always have non-zero support
-* Logical inconsistency is not represented internally
-
----
-
-### Demonstrated
-
-* Support-constrained masking enforces:
-
-$$
-P_{\text{masked}}(\text{invalid}) = 0
-$$
-
-* Deadlock naturally emerges for unsatisfiable problems
-
----
-
-### Not Claimed
-
-This experiment does **not** prove:
-
-* improved reasoning ability
-* elimination of hallucinations in general
-* scalability to open-ended generation
-
-It isolates a **single property**:
-
-> Control of probability support.
-
----
-
-## Limitations
-
-* Candidate space is finite (not full vocabulary)
-* Verifier is synthetic (oracle equality check)
-* No open-ended generation
-* No real semantic understanding
-
----
-
-## Why This Matters
-
-Standard LLMs behave as:
-
-$$
-\text{plausibility estimators}
-$$
-
-not:
-
-$$
-\text{constraint-satisfying reasoners}
-$$
-
-This experiment shows that:
-
-> Logical correctness must be enforced structurally, not learned implicitly.
-
----
-
-## Next Steps
-
-To extend this work:
-
-1. Move to **open-ended generation**
-2. Replace oracle verifier with NLI or learned model
-3. Evaluate impact on:
-
-   * accuracy
-   * hallucination rate
-4. Integrate into constrained decoding pipeline
-
----
-
-## Summary
-
-This repository provides a **minimal, reproducible demonstration** that:
-
-* logical errors are intrinsic to LLM probability distributions
-* support masking eliminates them exactly
-* reasoning should be framed as **constrained search**, not generation
-
----
-
-## License
-
-MIT (or specify)
-
----
-
-## Citation
-
-If you use this work, cite:
-
-```
-Yakunin, V. (2026)
-Support-Constrained Reasoning and Null Masking
-```
+```bash
+pip install torch transformers numpy tqdm
