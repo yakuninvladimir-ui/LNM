@@ -44,14 +44,3 @@ The masked distribution is guaranteed to have **exactly zero probability** on fo
 - The deadlock rate matches the fraction of contradictory premises (30%), demonstrating that the masking correctly identifies situations where no valid continuation exists.
 
 These observations align with the theoretical claims of the paper: standard autoregressive models conflate logical necessity with surface plausibility, and support constraints provide a clean, structural remedy.
-
-## Requirements
-
-- Python 3.8+
-- PyTorch
-- Transformers
-- NumPy
-
-Install dependencies:
-```bash
-pip install -r requirements.txt
