@@ -4,67 +4,199 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Qwen2--1.5B-orange)](https://huggingface.co/Qwen/Qwen2-1.5B)
 
-This repository contains a minimal yet rigorous demonstration of **support‑constrained generation** inspired by the paper  
-*"Support-Constrained Variational Meta Chain-of-Thought: A Nullity-Semantics Framework"* (Yakunin, 2026).
+# Low-Cost Logical Control for LLMs
 
-We show that a standard causal language model (**Qwen2‑1.5B**) systematically assigns non‑zero probability to logically impossible completions, and that a simple logical mask eliminates this *null leakage* while preserving relative preferences among valid continuations.  
-The experiment also validates the **deadlock mechanism** – when no admissible continuation exists, the system correctly signals a logical contradiction.
+This repository demonstrates a minimal framework for analyzing and improving reasoning reliability in language models.
 
----
+It contains two complementary experiments:
 
-## What Does This Experiment Test?
+1. **Post-hoc logical filtering (GSM8K)**
+2. **Support-constrained inference (distribution-level analysis)**
 
-We evaluate the base model on three types of synthetic tasks:
+The goal is not to build a production system, but to show a structural property of LLMs:
 
-| Task type        | Example prompt                                     | Correct completion          | Incorrect completions               |
-|------------------|----------------------------------------------------|-----------------------------|-------------------------------------|
-| **syllogism**    | `All A are B.\nAll B are C.\nTherefore:`           | ` All A are C.`             | ` Some A are not C.`<br>` No A are C.` |
-| **arithmetic**   | `12 + 7 =`                                         | ` 19`                       | ` 20`, ` 18`                        |
-| **contradiction**| `X is true.\nNot X is true.\nTherefore:`           | *(none)*                    | ` X is true.`, ` Not X is true.`    |
-
-For each example we compute the exact log‑probability of every candidate continuation (teacher‑forcing style) and then apply a hard logical mask $\chi(c) \in \{0,1\}$ provided by an **ideal oracle verifier** (which knows the ground‑truth answer).
-
-Two key metrics are reported:
-
-- **`null_mass`** – the total probability mass that the unmasked model assigns to **logically invalid** completions.
-- **`deadlock`** – whether the set of admissible continuations is empty after masking (i.e. no valid token exists).
+> Language models assign probability mass to logically invalid reasoning.
 
 ---
 
-## Key Results (N = 1000)
+# Contents
 
-| Task type       | Count | Mean `null_mass` | `null_positive` rate | `deadlock` rate |
-|-----------------|-------|------------------|----------------------|-----------------|
-| **contradiction** | 298   | ≈ 1.0            | 1.0                  | 1.0             |
-| **arithmetic**    | 300   | 0.08             | 1.0                  | 0.0             |
-| **syllogism**     | 402   | 0.004            | 1.0                  | 0.0             |
+## 1. GSM8K Experiment
 
-**Observations:**
+File: `gsm8k.py`
 
-1. **Null leakage is universal.**  
-   In every non‑contradiction example the base model assigns strictly positive probability to at least one invalid completion (`null_positive = 1.0`).
+Implements:
 
-2. **The magnitude of leakage varies.**  
-   The model is far more confident on syllogistic patterns (mean null mass ~0.4%) than on exact arithmetic (mean null mass ~8%), reflecting the inherent difficulty of precise numerical reasoning for a pure language model.
+- Multi-sample reasoning (self-consistency)
+- Cheap logical consistency scoring
+- Filtering of inconsistent trajectories
+- Data collection for distillation
 
-3. **Deadlock occurs exactly when it should.**  
-   All contradictory prompts result in an empty admissible set after masking (`deadlock = 1`). This is the precise condition for emitting a special `[LOGICAL_ERROR]` token and triggering backtracking in a full Meta‑CoT system.
+### Output
 
-4. **Masking guarantees zero null probability.**  
-   By construction, after renormalizing over the masked support, every invalid token receives **exactly zero** probability. This empirically verifies **Proposition 1 (Strict exclusion of Null)** from the theoretical framework.
+- `lowcost_logic_metrics.json`
+- `logical_distillation_data.jsonl`
+
+### Example results
+
+```
+Baseline: 36%
+Soft (consensus + filtering): 40%
+TopScore: 37%
+Filtered_Out_Avg: ~39%
+```
+
+Interpretation:
+
+- ~40% of generated reasoning is logically inconsistent
+- Removing inconsistent trajectories improves accuracy
+- Logic alone is weaker than statistical consensus
 
 ---
 
-## How to Reproduce
+## 2. Support-Constrained Inference
 
-### Requirements
+File: `masked_syllogism.py`
 
-- Python 3.8+
-- PyTorch ≥ 2.0
-- Transformers ≥ 4.30
-- NumPy, tqdm
+Implements:
 
-Install dependencies:
+- Exact log-probability computation
+- Masked distributions via χ(x)
+- Measurement of invalid probability mass
+
+### Metrics
+
+- **Null mass** — probability assigned to invalid outputs
+- **Deadlock** — no valid continuation exists
+
+### Output
+
+- `results.csv`
+
+---
+
+# Core Idea
+
+We model generation as:
+
+```
+P(x) = P_valid(x) + P_invalid(x)
+```
+
+Where:
+
+- `P_invalid` corresponds to logically inconsistent reasoning
+
+Key observation:
+
+> LLMs systematically assign non-zero probability to invalid reasoning.
+
+---
+
+# Two Regimes
+
+## 1. Post-hoc filtering (cheap)
+
+```
+generate → filter → select
+```
+
+- No model changes
+- Works with any API
+- +3–5% accuracy improvement
+
+## 2. Support-constrained inference (correct)
+
+```
+modify P(x) → mask invalid support → renormalize
+```
+
+- Requires access to logits
+- Provides theoretical grounding
+
+---
+
+# Connection
+
+Post-hoc filtering can be interpreted as:
+
+> A Monte Carlo approximation of support-constrained inference
+
+---
+
+# Installation
 
 ```bash
-pip install torch transformers numpy tqdm
+pip install -r requirements.txt
+```
+
+---
+
+# Running Experiments
+
+## GSM8K
+
+```bash
+python gsm8k.py
+```
+
+Make sure to set:
+
+```python
+MODEL_PATH = "path/to/your/gguf"
+```
+
+---
+
+## Masked Syllogism
+
+```bash
+python masked_syllogism.py
+```
+
+---
+
+# Notes
+
+- GSM8K experiment uses `llama.cpp` backend
+- Masked experiment uses HuggingFace transformers
+- CPU-only execution is supported (slow but works)
+
+---
+
+# Limitations
+
+- Logical checks are local (arithmetic only)
+- No full logical entailment
+- Sensitive to output formatting
+- Not a replacement for reasoning models
+
+---
+
+# Interpretation
+
+This repository shows:
+
+1. A large fraction of LLM outputs are internally inconsistent
+2. Simple filtering improves results
+3. The root problem lies in probability allocation
+
+---
+
+# Takeaway
+
+> The issue is not generation quality, but probability support.
+
+Correct reasoning requires:
+
+```
+Constraining the support of P(x)
+```
+
+---
+
+# Status
+
+Experimental / research prototype.
+
+Not intended as a production library.
